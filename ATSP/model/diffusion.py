@@ -120,8 +120,15 @@ class DSAATSPModel(nn.Module):
 
         self.decoder.set_kv(self.encoded_col)
 
-    def forward(self, t1, t2, xt):
+    def forward(self, t, xt):
         # xt = 1#state.xt
+        t1, t2 = self.time_schedule(t)
+        t1 = np.array([t1]).astype(int)
+        t2 = np.array([t2]).astype(int)
+
+        t1 = torch.from_numpy(t1).view(1)
+        t2 = torch.from_numpy(t2).view(1)
+
         x0_pred = self.decoder(xt)
         matrix_prob, xt = self.posterior(t1, t2, xt, x0_pred)
         return matrix_prob, xt
