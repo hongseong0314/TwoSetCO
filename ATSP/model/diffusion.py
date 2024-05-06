@@ -129,7 +129,7 @@ class DSAATSPModel(nn.Module):
         t1 = torch.from_numpy(t1).view(1)
         t2 = torch.from_numpy(t2).view(1)
 
-        x0_pred = self.decoder(xt)
+        x0_pred = self.decoder(t1.float(), xt)
         matrix_prob, xt = self.posterior(t1, t2, xt, x0_pred)
         return matrix_prob, xt
     
@@ -260,7 +260,7 @@ class ATSP_Decoder(nn.Module):
         embedding_dim = self.model_params['embedding_dim']
         head_num = self.model_params['head_num']
         qkv_dim = self.model_params['qkv_dim']
-
+        time_embed_dim = embedding_dim // 2
         self.Wq = nn.Linear(embedding_dim, head_num * qkv_dim, bias=False)
         self.Wk = nn.Linear(embedding_dim, head_num * qkv_dim, bias=False)
         self.Wv = nn.Linear(embedding_dim, head_num * qkv_dim, bias=False)
@@ -275,6 +275,11 @@ class ATSP_Decoder(nn.Module):
         # nn.ReLU(),
         nn.Conv2d(2, 2, kernel_size=1, bias=True))
 
+        self.time_embed = nn.Sequential(
+        nn.Linear(embedding_dim, time_embed_dim),
+        nn.ReLU(),
+        nn.Linear(time_embed_dim, embedding_dim),
+        )
     def set_kv(self, encoded_jobs):
         # encoded_jobs.shape: (batch, job, embedding)
         head_num = self.model_params['head_num']
@@ -287,18 +292,21 @@ class ATSP_Decoder(nn.Module):
         self.single_head_key = encoded_jobs.transpose(1, 2)
         # shape: (batch, embedding, job)
 
-    def forward(self, xt):
+    def forward(self, t, xt):
         # encoded_q4.shape: (batch, pomo, embedding)
         # ninf_mask.shape: (batch, pomo, job)
 
         head_num = self.model_params['head_num']
-
+        t_emb = self.time_embed(timestep_embedding(t, \
+                                                   self.model_params['embedding_dim']))
+        # shape: (batch, embedding)
         #  Multi-Head Attention
         #######################################################
         out_concat = self._multi_head_attention(self.q, self.k, self.v)
         # shape: (batch, job, head_num*qkv_dim)
 
         mh_atten_out = self.multi_head_combine(out_concat)
+        mh_atten_out = mh_atten_out + t_emb[:, None, :]
         # shape: (batch, pomo, embedding)
 
         #  Single-Head Attention, for probability calculation
@@ -317,7 +325,7 @@ class ATSP_Decoder(nn.Module):
         # score_masked = score_clipped + ninf_mask
 
         # probs = F.softmax(score_masked, dim=2)
-        # # shape: (batch, pomo, job)
+        # # shape: (batch, node, node)
         score = torch.stack((score_clipped, xt), dim=1)
         score_probs = self.node_to_node(score)
         score_probs = score_probs.permute(0, 2, 3, 1)
@@ -395,3 +403,23 @@ def get_x_T(batch_size, num_nodes):
         for i in range(tour.shape[0]):
             xT[idx, tour[i%num_nodes], tour[(i + 1)%num_nodes]] = 1
     return xT
+
+def timestep_embedding(timesteps, dim, max_period=10000):
+    """
+    Create sinusoidal timestep embeddings.
+
+    :param timesteps: a 1-D Tensor of N indices, one per batch element.
+                      These may be fractional.
+    :param dim: the dimension of the output.
+    :param max_period: controls the minimum frequency of the embeddings.
+    :return: an [N x dim] Tensor of positional embeddings.
+    """
+    half = dim // 2
+    freqs = torch.exp(
+        -math.log(max_period) * torch.arange(start=0, end=half, dtype=torch.float32) / half
+    ).to(device=timesteps.device)
+    args = timesteps[:, None].float() * freqs[None]
+    embedding = torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
+    if dim % 2:
+        embedding = torch.cat([embedding, torch.zeros_like(embedding[:, :1])], dim=-1)
+    return embedding
