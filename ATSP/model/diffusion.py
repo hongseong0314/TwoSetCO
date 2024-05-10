@@ -384,13 +384,13 @@ def reshape_by_heads(qkv, head_num):
 
 def get_rewards(solutions, problems, num_nodes=20):
     tours = solutions.argmax(dim=2)
-    solution_len = -(problems * solutions).sum(dim=2).sum(dim=1)
+    solution_len = (problems * solutions).sum(dim=2).sum(dim=1)
     for idx, tour in enumerate(tours):
         if (np.sort(tour) == np.arange(num_nodes)).all():
-            solution_len[idx] -= 1
+            pass#solution_len[idx] -= 1
         else:
-            solution_len[idx] = 1
-    return solution_len
+            solution_len[idx] = 10
+    return -solution_len
 
 def get_x_T(batch_size, num_nodes):
     result = torch.empty(0, num_nodes, dtype=torch.long)
